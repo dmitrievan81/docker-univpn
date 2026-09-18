@@ -1,16 +1,42 @@
+# Variant A: headless UniVPN + SOCKS5 on localhost for host apps (xfreerdp3, curl, …)
 services:
   univpn:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - 8080:8080
-      - 2222:2222
-    environment:
-      - REMOTE_HOST=10.0.0.1:22
-    devices:
-      - /dev/net/tun
+    image: jesusdf/huawei-vpn:latest
+    container_name: univpn
     cap_add:
       - NET_ADMIN
-    restart:
-      on-failure
+    devices:
+      - /dev/net/tun
+    ports:
+      # SOCKS5 only on loopback — host apps use 127.0.0.1:1080
+      - "127.0.0.1:1080:1080"
+    env_file:
+      - .env
+    environment:
+      # UniVPNCS segfaults if USER is unset
+      - USER=root
+      - TZ=${TZ:-Europe/Moscow}
+      - VPN_GATEWAY=${VPN_GATEWAY:?set VPN_GATEWAY in .env}
+      - VPN_PORT=${VPN_PORT:-4443}
+      - VPN_USERNAME=${VPN_USERNAME:?set VPN_USERNAME in .env}
+      - VPN_PASSWORD=${VPN_PASSWORD:?set VPN_PASSWORD in .env}
+      - TUN_DEVICE=${TUN_DEVICE:-cnem_vnic}
+    volumes:
+      # Passwords starting with "-" break upstream expect `send` without `--`
+      - ./scripts/connect.exp:/opt/univpn/connect.exp:ro
+    restart: unless-stopped
+
+  # Shares univpn netns: SOCKS traffic follows VPN routes after tunnel is up
+  socks:
+    image: ginuerzh/gost:2.11.5
+    container_name: univpn-socks
+    network_mode: "service:univpn"
+    depends_on:
+      univpn:
+        condition: service_started
+    restart: always
+    volumes:
+      - ./scripts/socks-entrypoint.sh:/socks-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/socks-entrypoint.sh"]
+    environment:
+      - TUN_DEVICE=${TUN_DEVICE:-cnem_vnic}

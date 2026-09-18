@@ -1,69 +1,72 @@
-# Docker wrapper for UniVPN
+# UniVPN headless + SOCKS5 (variant A)
 
-## Usage 使用方法
+Headless Huawei/LeagSoft **UniVPN** (`UniVPNCS`) in Docker, with **SOCKS5 on the host** at `127.0.0.1:1080`.  
+GUI/VNC are not used. Host apps (e.g. `xfreerdp3`) send traffic through the proxy.
 
-If you have docker-compose installed, you can run change the `REMOTE_HOST` variable in `docker-compose.yml`, then use the following command to start the container:
+Legacy noVNC stack is kept as `Dockerfile.novnc` / `docker-compose.novnc.yml` / `readme.novnc.md`.
 
-如果已经安装了 docker-compose,可以设置 `docker-compose.yml` 里面的 `REMOTE_HOST` 为远程主机的地址和端口，然后运行下面这一条就好:
+## Architecture
 
-```bash
-docker compose start
+```text
+Host: xfreerdp3 /proxy:socks5://127.0.0.1:1080 /v:...
+                 │
+           TCP 127.0.0.1:1080
+                 ▼
+┌────────────────────────────────┐
+│ univpn (jesusdf/huawei-vpn)    │
+│   UniVPNCS → cnem_vnic         │
+│ univpn-socks (gost)            │  network_mode: service:univpn
+│   SOCKS5 :1080                 │
+└────────────────┬───────────────┘
+                 ▼
+          vpn.oooslk.ru:4443
 ```
 
-Othewise, build the image and run the container with the following commands:
+## Prerequisites
 
-如果没有安装，就需要手动构建容器或拉取镜像，可以参考下面:
+- Docker + Compose
+- `/dev/net/tun` on the host (`ls -l /dev/net/tun`)
+- Gateway accepts **username/password** only (no OTP/certificate) — required for CLI login
 
-### Docker build 构建镜像
-
-```bash
-docker build -t docker-novnc-univpn .
-```
-
-### Docker pull 拉取镜像
+## Setup
 
 ```bash
-docker pull ghcr.io/yoolc/docker-univpn:latest # timeout error 国内拉取失败可以执行：docker pull ghcr.nju.edu.cn/yooLc/docker-univpn:latest
-docker tag ghcr.io/yoolc/docker-univpn:latest docker-novnc-univpn:latest # retag image name 重命名镜像名
+cd ~/projects/docker-univpn
+cp .env.example .env
+# edit .env: VPN_USERNAME / VPN_PASSWORD
+
+docker compose pull
+docker compose up -d
+docker compose ps
+docker compose logs -f univpn
 ```
 
-### Run Container 运行容器
+Healthy when logs show tunnel established and `cnem_vnic` exists:
 
 ```bash
-docker run -d \
-  --name univpn \
-  -p 8080:8080 \
-  -p 2222:2222 \
-  -p 10801:10801 \
-  -p 18888:18888 \
-  -e REMOTE_HOST=<Your Remote Host> \
-  -v /app/univpn:/root/UniVPN \
-  --device /dev/net/tun \
-  --cap-add NET_ADMIN \
-  docker-novnc-univpn
+docker compose exec univpn ip -br link
+docker compose exec univpn ip route
 ```
-端口说明：
-- http proxy port：`18888`
-- socks5 proxy port：`10801`
-- vnc网页访问端口：`8080`
-  - 访问方式：`http://localhost:8080/vnc.html`
-- `2222`无明确用途，可将远程主机`2222`端口转发至本地 ~比如ssh端口转发~
-> 对于校园网/组织网络等场景就没什么作用了，因为此时vpn连接的是跳板机而非服务器
 
-## Setup for direct login 配置自动登录
+## Use SOCKS5 from the host
 
-Goto `http://localhost:8080/vnc.html` and login noVNC.
+```bash
+# quick check (hostname resolved via proxy)
+curl -sS --socks5-hostname 127.0.0.1:1080 https://ifconfig.me; echo
 
-在 `http://localhost:8080/vnc.html` 可以看到容器的 noVNC 界面，进入后可以在图形界面中进行配置.
+# RDP
+xfreerdp3 /proxy:socks5://127.0.0.1:1080 /v:INTERNAL_HOST:3389 /u:USER
+```
 
-Start UniVPN, and login with your credentials, remember to tick the "Auto Login" checkbox.
+## Stop
 
-Then, extract /root/UniVPN from the container and put it in the same directory as the Dockerfile.
+```bash
+docker compose down
+```
 
-After that, you can rebuild this image and run again.
+## Notes
 
-在 UniVPN 登陆之后（记得点击自动登录），然后把容器 /root/UniVPN 这个目录下的文件提取出来，放到和 Dockerfile 同级的目录下。然后重新构建镜像并运行，就可以不用再登陆 noVNC 配置了。
-
-## Credits
-
-Adapted from [docker-novnc](https://github.com/theasp/docker-novnc) project by [theasp](https://github.com/theasp), [Youhei Sakurai](https://github.com/sakurai-youhei) and [Mettbrot](https://github.com/Mettbrot).
+- SOCKS is bound to **127.0.0.1** only (not exposed to LAN).
+- Split tunnelling: only routes pushed by the gateway go via VPN; use an internal IP/hostname reachable through those routes for RDP.
+- `scripts/connect.exp` is mounted over the image script so passwords that start with `-` work (`send --`).
+- Image: [jesusdf/huawei-vpn](https://hub.docker.com/r/jesusdf/huawei-vpn) (official UniVPN CLI + expect). SOCKS: [ginuerzh/gost](https://hub.docker.com/r/ginuerzh/gost).

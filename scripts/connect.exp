@@ -1,0 +1,61 @@
+#!/usr/bin/expect -f
+#
+# Drives the interactive UniVPNCS CLI to bring up the tunnel using credentials
+# taken from the environment, so nothing sensitive is ever written to disk.
+#
+# Patched vs upstream jesusdf/huawei-vpn: use `send --` so passwords that start
+# with "-" (or look like expect flags) are sent as data, not as send(1) options.
+#
+# Required environment variables:
+#   CONNECTION_NAME   name of the pre-rendered connection profile
+#   VPN_USERNAME      login user name
+#   VPN_PASSWORD      login password
+#
+
+set name $env(CONNECTION_NAME)
+set user $env(VPN_USERNAME)
+set pass $env(VPN_PASSWORD)
+
+# The gateway can be slow to answer during authentication.
+set timeout 90
+
+spawn ./UniVPNCS
+
+# Main menu lists connections as "<idx>:<name>"; grab our connection's index.
+expect {
+    -re "(\[0-9]+):$name\[^A-Za-z0-9]" { set idx $expect_out(1,string) }
+    timeout { puts "\n\[connect] connection '$name' not found in menu"; exit 1 }
+}
+send -- "$idx\r"
+
+# Connection sub-menu -> 1:Connect
+expect {
+    -re "1:Connect" { send -- "1\r" }
+    timeout { puts "\n\[connect] connection sub-menu not shown"; exit 1 }
+}
+
+# Username prompt.
+expect {
+    -nocase -re "fail|error" { puts "\n\[connect] failed before login prompt"; exit 2 }
+    -re "login user name" { send -- "$user\r" }
+    timeout { puts "\n\[connect] no username prompt"; exit 1 }
+}
+
+# Password prompt.
+expect {
+    -nocase -re "password" { send -- "$pass\r" }
+    timeout { puts "\n\[connect] no password prompt"; exit 1 }
+}
+
+# Authentication result.
+expect {
+    -re "Connect Success" { puts "\n\[connect] tunnel established" }
+    -nocase -re "incorrect|wrong|invalid|denied|fail" {
+        puts "\n\[connect] LOGIN FAILED"; exit 2
+    }
+    timeout { puts "\n\[connect] timed out waiting for connect result"; exit 1 }
+}
+
+# Keep UniVPNCS in the foreground: it holds the tunnel open.
+set timeout -1
+expect eof
