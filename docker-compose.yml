@@ -40,3 +40,19 @@ services:
     entrypoint: ["/bin/sh", "/socks-entrypoint.sh"]
     environment:
       - TUN_DEVICE=${TUN_DEVICE:-cnem_vnic}
+      # Corporate DNS from UniVPN; avoids Amnezia fake-IP via Docker→host DNS
+      - VPN_DNS=${VPN_DNS:-192.168.44.123 192.168.44.70}
+      - VPN_DOMAIN=${VPN_DOMAIN:-corp.oooslk.ru}
+
+  # HTTP CONNECT on loopback for JGit/EDT: they ignore socks5h and resolve
+  # gitlab.oooslk.ru via host Amnezia fake-IP (198.18.x.x → HTTP 403).
+  # CONNECT keeps the hostname; gost then dials SOCKS5 (remote DNS in VPN).
+  http-proxy:
+    image: ginuerzh/gost:2.11.5
+    container_name: univpn-http-proxy
+    network_mode: host
+    depends_on:
+      socks:
+        condition: service_started
+    restart: unless-stopped
+    command: ["-L=http://127.0.0.1:8118", "-F=socks5://127.0.0.1:1080"]

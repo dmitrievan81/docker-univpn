@@ -50,13 +50,20 @@ docker compose exec univpn ip route
 
 ## Use SOCKS5 from the host
 
+Prefer **`--socks5-hostname`** (or browser “proxy DNS”) so names resolve inside the VPN, not on the host (Amnezia fake-IP `198.18.x.x` → HTTP 403).
+
 ```bash
-# quick check (hostname resolved via proxy)
+# Internet check
 curl -sS --socks5-hostname 127.0.0.1:1080 https://ifconfig.me; echo
+
+# Internal GitLab
+curl -sS -k --socks5-hostname 127.0.0.1:1080 -o /dev/null -w '%{http_code}\n' https://gitlab.oooslk.ru/users/sign_in
 
 # RDP
 xfreerdp3 /proxy:socks5://127.0.0.1:1080 /v:INTERNAL_HOST:3389 /u:USER
 ```
+
+Firefox: SOCKS5 `127.0.0.1:1080` + remote DNS (`network.proxy.socks_remote_dns=true`).
 
 ## Stop
 
@@ -69,4 +76,5 @@ docker compose down
 - SOCKS is bound to **127.0.0.1** only (not exposed to LAN).
 - Split tunnelling: only routes pushed by the gateway go via VPN; use an internal IP/hostname reachable through those routes for RDP.
 - `scripts/connect.exp` is mounted over the image script so passwords that start with `-` work (`send --`).
+- `socks-entrypoint.sh` pins `/etc/resolv.conf` to UniVPN DNS (`192.168.44.123`, `192.168.44.70` for `corp.oooslk.ru`) so gost does not leak to host Amnezia DNS.
 - Image: [jesusdf/huawei-vpn](https://hub.docker.com/r/jesusdf/huawei-vpn) (official UniVPN CLI + expect). SOCKS: [ginuerzh/gost](https://hub.docker.com/r/ginuerzh/gost).
